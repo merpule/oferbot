@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Админ-панель бота</title>
+  <style>
+    body{font:15px system-ui,sans-serif;background:#f5f6f8;margin:0;color:#171717}
+    main{max-width:1000px;margin:30px auto;padding:0 16px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+    .card,section{background:white;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:14px}
+    .num{font-size:26px;font-weight:700}table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:9px;border-bottom:1px solid #eee;overflow-wrap:anywhere}
+    button,input{padding:8px;border-radius:6px;border:1px solid #ddd}button{cursor:pointer}
+    .danger{color:#b91c1c}a{color:#2563eb}
+  </style>
+</head>
+<body><main>
+  <h1>Админ-панель бота</h1>
+  <p><a href="/logout">Выйти</a></p>
+  <div class="grid">
+    <div class="card">Сессии<div class="num">{{ sessions_count }}</div></div>
+    <div class="card">Онлайн<div class="num">{{ online }}</div></div>
+    <div class="card">Офферы<div class="num">{{ gifts }}</div></div>
+    <div class="card">Ошибки<div class="num">{{ errors }}</div></div>
+    <div class="card">Stars<div class="num">{{ stars }}</div></div>
+    <div class="card">GRAM<div class="num">{{ gram }}</div></div>
+  </div>
+  <section>
+    <h2>Выдать доступ</h2>
+    <form method="post" action="/grant">
+      <input name="user_id" type="number" min="1" placeholder="Telegram ID" required>
+      <input name="days" type="number" min="0" placeholder="Дней (0 = бессрочно)">
+      <button type="submit">Выдать</button>
+    </form>
+  </section>
+  <section>
+    <h2>Ожидают одобрения ({{ pending|length }})</h2>
+    {% if pending %}
+    <table><thead><tr><th>ID</th><th>Пользователь</th><th>Действия</th></tr></thead><tbody>
+    {% for user in pending %}
+      <tr><td>{{ user.id }}</td><td>{{ user.full_name }}{% if user.username %} (@{{ user.username }}){% endif %}</td>
+      <td><a href="/approve/{{ user.id }}">Одобрить</a> · <a class="danger" href="/reject/{{ user.id }}">Отклонить</a></td></tr>
+    {% endfor %}
+    </tbody></table>
+    {% else %}<p>Нет ожидающих заявок.</p>{% endif %}
+  </section>
+  <section>
+    <h2>Одобренные пользователи ({{ approved|length }})</h2>
+    {% if approved %}
+    <table><thead><tr><th>ID</th><th>Пользователь</th><th>Статус</th><th>Действия</th></tr></thead><tbody>
+    {% for user in approved %}
+      <tr><td>{{ user.id }}</td><td>{{ user.full_name }}{% if user.username %} (@{{ user.username }}){% endif %}</td>
+      <td>{{ user.status }}</td><td><a class="danger" href="/revoke/{{ user.id }}">Отозвать</a></td></tr>
+    {% endfor %}
+    </tbody></table>
+    {% else %}<p>Пока нет пользователей.</p>{% endif %}
+  </section>
+</main></body></html>
