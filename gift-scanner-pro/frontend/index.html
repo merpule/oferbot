@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gift Scanner Pro</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{--bg:#0a0a0d;--panel:#14141a;--panel2:#1c1c25;--text:#f2f2f7;--muted:#8b8b9a;--a:#4f8cff;--b:#8b5cf6;--ok:#34d399;--err:#f87171;--r:18px}
+[data-theme=light]{--bg:#f4f5f9;--panel:#fff;--panel2:#eceef5;--text:#16161d;--muted:#6b6b7b}
+[data-theme=midnight]{--bg:#02030a;--panel:#0a0d1c;--panel2:#11162d;--a:#5ea0ff;--b:#6366f1}
+[data-theme=purple]{--bg:#0e0a16;--panel:#18112a;--panel2:#221a3a;--a:#a78bfa;--b:#d946ef}
+[data-theme=blue]{--bg:#06101c;--panel:#0d1b2e;--panel2:#142841;--a:#38bdf8;--b:#3b82f6}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:15px/1.4 -apple-system,system-ui,"Segoe UI",Roboto,sans-serif;padding:env(safe-area-inset-top) 0 calc(76px + env(safe-area-inset-bottom))}
+main{max-width:860px;margin:0 auto;padding:14px}
+h2{margin:6px 0 12px;font-size:22px}
+.card{background:var(--panel);border-radius:var(--r);padding:14px;margin-bottom:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+input,select{width:100%;background:var(--panel2);color:var(--text);border:1px solid transparent;border-radius:12px;padding:11px 12px;font:inherit;outline:0}
+input:focus,select:focus{border-color:var(--a)}
+.row{display:flex;gap:8px;margin-bottom:8px}.row>*{flex:1;min-width:0}
+button{border:0;border-radius:12px;padding:11px 14px;font:inherit;font-weight:600;color:#fff;background:linear-gradient(135deg,var(--a),var(--b));cursor:pointer}
+button.ghost{background:var(--panel2);color:var(--text)}button:disabled{opacity:.5}
+nav{position:fixed;bottom:0;left:0;right:0;background:var(--panel);display:flex;overflow-x:auto;padding:8px 8px calc(8px + env(safe-area-inset-bottom));gap:4px;border-top:1px solid var(--panel2)}
+nav button{flex:0 0 auto;background:none;color:var(--muted);padding:8px 12px;font-size:13px}
+nav button.on{color:var(--text);background:var(--panel2)}
+.bar{height:8px;background:var(--panel2);border-radius:8px;overflow:hidden;margin:10px 0}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--a),var(--b));transition:width .3s}
+.muted{color:var(--muted);font-size:13px}.err{color:var(--err)}.ok{color:var(--ok)}
+.gift{display:flex;flex-direction:column;gap:6px;overflow:hidden}
+.gift .img{height:120px;border-radius:12px;background:var(--panel2);display:grid;place-items:center;overflow:hidden}
+.gift img{width:100%;height:100%;object-fit:cover}
+.tag{display:inline-block;background:var(--panel2);border-radius:8px;padding:2px 8px;font-size:12px;margin:0 4px 4px 0}
+.stats{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0}.stats b{font-size:20px;display:block}
+.empty{text-align:center;color:var(--muted);padding:36px 12px}
+.spin{width:22px;height:22px;border:3px solid var(--panel2);border-top-color:var(--a);border-radius:50%;animation:s .8s linear infinite;margin:20px auto}
+@keyframes s{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}.bar i{transition:none}}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<nav id="nav"></nav>
+<script>
+const tg = window.Telegram && Telegram.WebApp; if (tg) { tg.ready(); tg.expand(); }
+const H = {"X-Init-Data": tg ? tg.initData : ""};
+const TABS = [["scanner","Сканер"],["collection","Коллекции"],["model","Модели"],["backdrop","Фоны"],["pattern","Узоры"],["owners","Владельцы"],["favorites","Избранное"],["history","История"],["settings","Настройки"]];
+const $ = s => document.querySelector(s), esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let tab = "scanner", job = null, timer = null, filt = {}, offset = 0, favs = new Set();
+
+async function api(path, opt = {}) {
+  const r = await fetch("/api" + path, {...opt, headers: {...H, "Content-Type": "application/json"}});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail ? (typeof d.detail === "string" ? d.detail : "Проверь введённые данные") : "Ошибка " + r.status);
+  return d;
+}
+const q = o => Object.entries(o).filter(([, v]) => v !== "" && v != null).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
+
+function nav() {
+  $("#nav").innerHTML = TABS.map(([k, n]) => `<button class="${k === tab ? "on" : ""}" data-t="${k}">${n}</button>`).join("");
+  $("#nav").onclick = e => { const t = e.target.dataset.t; if (t) { tab = t; nav(); render(); } };
+}
+const loading = () => `<div class="spin"></div>`;
+const fail = e => `<div class="empty err">${esc(e.message)}</div>`;
+
+function giftCard(g) {
+  const owner = g.owner_username ? `<a href="https://t.me/${esc(g.owner_username)}" style="color:var(--a)">@${esc(g.owner_username)}</a>` : `<span class="muted">Username не указан</span>`;
+  return `<div class="card gift">
+    <div class="img"><img src="${esc(g.image)}" alt="" loading="lazy" onerror="this.remove()"></div>
+    <b>${esc(g.collection)} #${g.num}</b>
+    <div><span class="tag">Модель: ${esc(g.model || "—")}</span><span class="tag">Фон: ${esc(g.backdrop || "—")}</span><span class="tag">Узор: ${esc(g.pattern || "—")}</span></div>
+    <div>${owner}</div>
+    <div class="row"><button onclick="window.open('${esc(g.url)}','_blank')">Открыть подарок</button>
+    <button class="ghost" data-fav="${esc(g.slug)}">${favs.has(g.slug) ? "★ В избранном" : "☆ В избранное"}</button></div></div>`;
+}
+document.addEventListener("click", async e => {
+  const s = e.target.dataset.fav; if (!s) return;
+  const on = !favs.has(s); await api("/favorites/" + encodeURIComponent(s), {method: on ? "PUT" : "DELETE"});
+  on ? favs.add(s) : favs.delete(s); e.target.textContent = on ? "★ В избранном" : "☆ В избранное";
+});
+
+async function render() {
+  clearInterval(timer);
+  const el = $("#app");
+  if (tab === "scanner") return scannerView(el);
+  el.innerHTML = loading();
+  try {
+    if (["collection","model","backdrop","pattern"].includes(tab)) {
+      const d = await api("/facets/" + tab);
+      el.innerHTML = `<h2>${TABS.find(t => t[0] === tab)[1]}</h2>` + (d.length ? `<div class="grid">${d.map(x => `<div class="card" data-pick="${esc(x.name)}" style="cursor:pointer"><b>${esc(x.name)}</b><div class="muted">${x.count} в базе</div></div>`).join("")}</div>` : `<div class="empty">Каталог пуст. Просканируй коллекцию на вкладке «Сканер».</div>`);
+      el.onclick = e => { const c = e.target.closest("[data-pick]"); if (c) { filt = {[tab]: c.dataset.pick}; tab = "scanner"; nav(); render(); } };
+    } else if (tab === "owners") {
+      const d = await api("/owners?limit=100");
+      el.innerHTML = `<h2>Владельцы</h2>` + (d.length ? d.map(o => `<div class="card row" style="align-items:center"><a href="https://t.me/${esc(o.username)}" style="color:var(--a)">@${esc(o.username)}</a><span class="muted" style="text-align:right">${o.count} подарков</span></div>`).join("") : `<div class="empty">Пока нет владельцев с публичным username.</div>`);
+    } else if (tab === "favorites") {
+      const d = await api("/favorites"); d.forEach(g => { g.url = "https://t.me/nft/" + g.slug; g.image = `https://nft.fragment.com/gift/${g.slug.toLowerCase()}.medium.jpg`; favs.add(g.slug); });
+      el.innerHTML = `<h2>Избранное</h2>` + (d.length ? `<div class="grid">${d.map(giftCard).join("")}</div>` : `<div class="empty">Нажми ☆ на карточке подарка, и он появится здесь.</div>`);
+    } else if (tab === "history") {
+      const d = await api("/history");
+      el.innerHTML = `<h2>История</h2>` + (d.length ? d.map(h => `<div class="card">${esc(h.query)}<div class="muted">${new Date(h.created_at * 1000).toLocaleString()}</div></div>`).join("") : `<div class="empty">Ты ещё ничего не сканировал.</div>`);
+    } else if (tab === "settings") {
+      const st = await api("/status").catch(e => null);
+      const row = (n, s) => `<div class="row"><span>${n}</span><span class="${s.ready ? "ok" : "err"}" style="text-align:right">${s.ready ? "работает" : esc(s.error || s.note || "не готов")}</span></div>`;
+      el.innerHTML = `<h2>Настройки</h2><div class="card"><div class="muted" style="margin-bottom:8px">Оформление</div><select id="theme">${["dark","light","midnight","purple","blue"].map(t => `<option ${document.documentElement.dataset.theme === t ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+      <div class="card"><div class="muted" style="margin-bottom:8px">Источники данных</div>${st ? row("Telegram-сканер", st.telegram_scanner) + row("Portals", st.portals) + row("Getgems", st.getgems) : `<span class="err">Backend недоступен</span>`}</div>`;
+      $("#theme").onchange = e => { document.documentElement.dataset.theme = e.target.value; localStorage.setItem("theme", e.target.value); };
+    }
+  } catch (e) { el.innerHTML = fail(e); }
+}
+
+function scannerView(el) {
+  el.innerHTML = `<h2>Gift Scanner</h2>
+  <div class="card"><div class="muted" style="margin-bottom:8px">Сканирование коллекции по номерам</div>
+    <div class="row"><input id="sc" placeholder="Коллекция, например PlushPepe"></div>
+    <div class="row"><input id="s1" type="number" min="1" placeholder="С номера" value="1"><input id="s2" type="number" min="1" placeholder="По номер" value="200"></div>
+    <div class="row"><button id="go">Начать сканирование</button><button id="stop" class="ghost" disabled>Отменить</button></div>
+    <div id="prog"></div></div>
+  <div class="card"><div class="muted" style="margin-bottom:8px">Поиск по базе</div>
+    <div class="row"><input id="f_collection" placeholder="Коллекция"><input id="f_number" type="number" placeholder="Номер"></div>
+    <div class="row"><input id="f_model" placeholder="Модель"><input id="f_backdrop" placeholder="Фон"></div>
+    <div class="row"><input id="f_pattern" placeholder="Узор"><input id="f_owner" placeholder="@username"></div>
+    <div class="row"><button id="find">Найти</button><button id="reset" class="ghost">Сбросить</button></div></div>
+  <div id="res"></div>`;
+  for (const k of ["collection","number","model","backdrop","pattern","owner"]) $("#f_" + k).value = filt[k] ?? "";
+  $("#go").onclick = startScan; $("#stop").onclick = () => job && api(`/scan/${job.id}/cancel`, {method: "POST"});
+  $("#find").onclick = () => { filt = {}; for (const k of ["collection","number","model","backdrop","pattern","owner"]) filt[k] = $("#f_" + k).value.trim(); offset = 0; search(true); };
+  $("#reset").onclick = () => { filt = {}; scannerView(el); };
+  if (job && job.status === "running") poll();
+  search(true);
+}
+
+async function startScan() {
+  const el = $("#prog"); el.innerHTML = loading();
+  try { job = await api("/scan", {method: "POST", body: JSON.stringify({collection: $("#sc").value.trim(), start: +$("#s1").value, end: +$("#s2").value})}); poll(); }
+  catch (e) { el.innerHTML = fail(e); }
+}
+function poll() {
+  clearInterval(timer);
+  const tick = async () => {
+    if (!$("#prog")) return clearInterval(timer);
+    try { job = await api("/scan/" + job.id); } catch (e) { $("#prog").innerHTML = fail(e); return clearInterval(timer); }
+    const p = Math.round(job.done / job.total * 100), run = job.status === "running";
+    $("#stop").disabled = !run; $("#go").disabled = run;
+    $("#prog").innerHTML = `<div class="bar"><i style="width:${p}%"></i></div>
+      <div class="muted">${job.collection}: ${job.done} из ${job.total} (${p}%), новых ${job.found}, из кэша ${job.cached}, не найдено ${job.missing}${job.errors ? ", ошибок " + job.errors : ""}</div>
+      ${job.status === "finished" ? `<div class="ok">Готово. ${esc(job.note || "")}</div>` : ""}${job.status === "cancelled" ? `<div class="muted">Отменено</div>` : ""}${job.error ? `<div class="err">${esc(job.error)}</div>` : ""}`;
+    if (!run) { clearInterval(timer); search(true); }
+  };
+  tick(); timer = setInterval(tick, 1500);
+}
+
+async function search(reset) {
+  const el = $("#res"); if (!el) return;
+  if (reset) { offset = 0; el.innerHTML = loading(); }
+  try {
+    const d = await api("/gifts?" + q({...filt, limit: 30, offset}));
+    favs = favs.size ? favs : new Set((await api("/favorites")).map(g => g.slug));
+    const s = d.stats;
+    if (reset) el.innerHTML = `<div class="stats"><div><b>${s.total}</b><span class="muted">подарков</span></div><div><b>${s.owners}</b><span class="muted">уникальных владельцев</span></div><div><b>${s.no_username}</b><span class="muted">без username</span></div></div><div class="grid" id="list"></div><div id="more"></div>`;
+    $("#list").insertAdjacentHTML("beforeend", d.items.map(giftCard).join(""));
+    if (reset && !d.items.length) $("#list").outerHTML = `<div class="empty">Ничего не найдено. Запусти сканирование коллекции или измени фильтры.</div>`;
+    $("#more").innerHTML = d.items.length === 30 ? `<button class="ghost" style="width:100%">Показать ещё</button>` : "";
+    if ($("#more button")) $("#more button").onclick = () => { offset += 30; search(false); };
+  } catch (e) { el.innerHTML = fail(e); }
+}
+
+document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark";
+nav(); render();
+</script>
+</body>
+</html>
